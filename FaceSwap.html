@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuraSwap Pro | Neural Masking</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        body { background: #020617; color: white; font-family: 'Inter', sans-serif; overflow: hidden; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(20px); border: 1px solid rgba(51, 65, 85, 0.5); }
+        canvas { transform: scaleX(-1); border-radius: 2rem; }
+        #video-container { box-shadow: 0 0 50px rgba(59, 130, 246, 0.2); }
+    </style>
+</head>
+<body class="h-screen flex items-center justify-center p-4">
+
+    <div id="ui-layer" class="absolute z-10 w-full max-w-md space-y-6 text-center">
+        <div id="upload-zone" class="glass p-10 rounded-[2.5rem] shadow-2xl transition-all duration-500">
+            <h1 class="text-3xl font-bold mb-2">Face<span class="text-blue-500">Wrap</span> Pro</h1>
+            <p class="text-slate-400 mb-8 text-sm">Upload a transparent face sticker (PNG)</p>
+
+            <label class="block w-full cursor-pointer group">
+                <input type="file" id="imageInput" class="hidden" accept="image/*">
+                <div class="py-12 border-2 border-dashed border-slate-700 rounded-2xl group-hover:border-blue-500 transition-all">
+                    <span id="status-text" class="text-slate-500 font-medium">Drop Sticker Here</span>
+                </div>
+            </label>
+
+            <button id="startBtn" disabled class="mt-8 w-full py-4 bg-slate-800 text-slate-500 rounded-xl font-bold uppercase tracking-widest transition-all">
+                Activate Neural Link
+            </button>
+        </div>
+    </div>
+
+    <div id="video-container" class="relative hidden w-full max-w-5xl">
+        <video id="input_video" class="hidden"></video>
+        <canvas id="output_canvas" class="w-full h-auto border-4 border-slate-800"></canvas>
+
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-4">
+            <button onclick="location.reload()" class="glass px-6 py-2 rounded-full text-xs font-bold hover:bg-white/10">RESET ENGINE</button>
+        </div>
+    </div>
+
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const startBtn = document.getElementById('startBtn');
+        const uiLayer = document.getElementById('upload-zone');
+        const videoContainer = document.getElementById('video-container');
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        let stickerImg = new Image();
+        let isReady = false;
+
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    stickerImg.src = event.target.result;
+                    document.getElementById('status-text').innerText = "Sticker Loaded!";
+                    document.getElementById('status-text').classList.add('text-blue-400');
+                    startBtn.disabled = false;
+                    startBtn.classList.replace('bg-slate-800', 'bg-blue-600');
+                    startBtn.classList.replace('text-slate-500', 'text-white');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        startBtn.addEventListener('click', () => {
+            uiLayer.parentElement.classList.add('opacity-0', 'pointer-events-none');
+            videoContainer.classList.remove('hidden');
+            initAI();
+        });
+
+        function initAI() {
+            const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+            faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
+            faceMesh.onResults(onResults);
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => await faceMesh.send({image: videoElement}),
+                width: 1280, height: 720
+            });
+            camera.start();
+        }
+
+        function onResults(results) {
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+
+                // Points for Logic: 1=Nose, 33=Left Eye, 263=Right Eye, 152=Chin
+                const nose = landmarks[1];
+                const leftEye = landmarks[33];
+                const rightEye = landmarks[263];
+                const chin = landmarks[152];
+
+                // Calculate Face Width and Height for Scaling
+                const faceWidth = Math.hypot(rightEye.x - leftEye.x, rightEye.y - leftEye.y) * canvasElement.width * 2.5;
+                const faceHeight = Math.hypot(nose.y - chin.y, nose.x - chin.x) * canvasElement.height * 3.5;
+
+                // Calculate Rotation Angle (Roll)
+                const angle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
+
+                // Move Context to Nose (Center)
+                canvasCtx.translate(nose.x * canvasElement.width, nose.y * canvasElement.height);
+
+                // Apply Real-time Rotation
+                canvasCtx.rotate(angle);
+
+                // Draw the Sticker
+                // We offset by half width/height to keep it centered on the nose
+                canvasCtx.drawImage(
+                    stickerImg,
+                    -faceWidth / 2,
+                    -faceHeight / 1.5, // Lift slightly higher to cover forehead
+                    faceWidth,
+                    faceHeight
+                );
+            }
+            canvasCtx.restore();
+        }
+    </script>
+</body>
+</html>
